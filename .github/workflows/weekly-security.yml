@@ -1,0 +1,31 @@
+name: Weekly Security Scan
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday 9am UTC
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for secrets
+        run: bash tests/test_no_secrets.sh
+
+      - name: Verify security defaults unchanged
+        run: |
+          python3 -c "
+          import json
+          c = json.load(open('config/openclaw/openclaw-restricted.json'))
+          assert c['security']['bind'] == '127.0.0.1'
+          assert c['security']['exec']['ask'] == 'always'
+          assert c['security']['exec']['elevated'] == False
+          print('✅ Security defaults intact')
+          "
+
+      - name: ShellCheck all scripts
+        run: |
+          sudo apt-get install -y shellcheck
+          find . -name "*.sh" | xargs shellcheck --severity=error || true

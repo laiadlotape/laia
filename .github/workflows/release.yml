@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests before release
+        run: |
+          docker build -t laia-test -f tests/Dockerfile .
+          docker run --rm laia-test bash tests/run-all.sh
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          body: |
+            ## LAIA Linux ${{ github.ref_name }}
+
+            ### Installation
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/laiadlotape/laia/main/scripts/install.sh | sudo bash
+            ```
+
+            See [INSTALL.md](docs/INSTALL.md) for full installation instructions.
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
