@@ -1,0 +1,116 @@
+# AppArmor profile for Ollama AI server
+# Restricts what Ollama can access on the filesystem
+#
+# Ollama runs as a server process that loads and runs large language models.
+# This profile allows it to:
+#   - Access its own model storage
+#   - Read system hardware info (for GPU detection)
+#   - Accept network connections (localhost only for API)
+#
+# It is explicitly denied access to:
+#   - Sensitive system files (/etc/shadow, /root/)
+#   - Other users' SSH keys
+#   - Password files (write)
+#
+# Install: sudo cp ollama /etc/apparmor.d/
+#          sudo aa-enforce /etc/apparmor.d/ollama
+
+#include <tunables/global>
+
+profile ollama /usr/local/bin/ollama {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/ssl_certs>
+
+  # Ollama binary — execute and read only
+  /usr/local/bin/ollama mr,
+
+  # Shared library access (for dynamically linked deps)
+  /usr/lib/** rm,
+  /usr/lib64/** rm,
+  /lib/** rm,
+  /lib64/** rm,
+
+  # System configuration reading (hostname, timezone, etc.)
+  /etc/localtime r,
+  /etc/timezone r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /etc/nsswitch.conf r,
+
+  # Model storage — Ollama stores downloaded models here
+  /usr/share/ollama/ r,
+  /usr/share/ollama/** rwk,
+
+  # User model storage — models downloaded to home dir
+  owner @{HOME}/.ollama/ rw,
+  owner @{HOME}/.ollama/** rwk,
+
+  # Temporary files (needed during model loading/inference)
+  owner /tmp/ollama-* rw,
+  owner /run/user/@{uid}/ollama* rw,
+
+  # Network — needed for API server and downloading models
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+
+  # System info for GPU detection and resource management
+  /sys/class/drm/ r,
+  /sys/class/drm/** r,
+  /sys/devices/pci*/** r,
+  /proc/@{pid}/status r,
+  /proc/@{pid}/maps r,
+  /proc/meminfo r,
+  /proc/cpuinfo r,
+  /proc/self/ r,
+  /proc/self/** rw,
+
+  # GPU compute (CUDA/ROCm/Vulkan)
+  /dev/dri/ r,
+  /dev/dri/** rw,
+  /dev/nvidia* rw,
+  /proc/driver/nvidia/ r,
+  /proc/driver/nvidia/** r,
+
+  # Logging
+  /var/log/ollama/ rw,
+  /var/log/ollama/** rw,
+
+  # -----------------------------------------------------------------------
+  # EXPLICIT DENIALS — these override any allows above
+  # -----------------------------------------------------------------------
+
+  # Sensitive authentication data
+  deny /etc/shadow r,
+  deny /etc/shadow+ r,
+  deny /etc/gshadow r,
+  deny /etc/passwd w,
+  deny /etc/group w,
+  deny /etc/sudoers r,
+  deny /etc/sudoers.d/ r,
+
+  # Root's home directory
+  deny /root/ rw,
+  deny /root/** rw,
+
+  # SSH keys for all users
+  deny /home/*/.ssh/ r,
+  deny /home/*/.ssh/** r,
+
+  # GPG keys and sensitive config
+  deny /home/*/.gnupg/ r,
+  deny /home/*/.gnupg/** r,
+
+  # Other users' home directories
+  deny /home/*/.config/ r,
+  deny /home/*/.local/share/ r,
+
+  # Kernel security interfaces
+  deny /sys/kernel/security/ rw,
+  deny /proc/sysrq-trigger rw,
+
+  # Arbitrary code execution from temp dirs
+  deny /tmp/** x,
+  deny /var/tmp/** x,
+}

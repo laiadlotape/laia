@@ -1,0 +1,164 @@
+# AppArmor profile for OpenClaw
+# OpenClaw is an AI assistant with significant system access — restrict carefully
+#
+# OpenClaw needs to:
+#   - Read/write its own config and workspace directories
+#   - Make network connections (Anthropic API, etc.)
+#   - Execute tools and subprocesses (within its workspace)
+#
+# What it should NOT do:
+#   - Read SSH keys, GPG keys, browser profiles
+#   - Write to system directories
+#   - Access other users' data
+#   - Read sensitive auth files
+#   - Execute arbitrary binaries from /tmp
+#
+# NOTE: AppArmor profiles for Node.js applications are complex because node
+# loads many modules. Adjust paths based on your actual installation.
+#
+# Install: sudo cp openclaw /etc/apparmor.d/
+#          sudo aa-enforce /etc/apparmor.d/openclaw
+
+#include <tunables/global>
+
+profile openclaw /usr/local/bin/openclaw {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/ssl_certs>
+  #include <abstractions/user-tmp>
+
+  # OpenClaw binary
+  /usr/local/bin/openclaw mr,
+
+  # Node.js runtime (OpenClaw is a Node app)
+  /usr/bin/node mr,
+  /usr/bin/node* mr,
+  /usr/local/bin/node mr,
+
+  # Node.js modules
+  /usr/local/lib/node_modules/ r,
+  /usr/local/lib/node_modules/** r,
+  /usr/lib/node_modules/ r,
+  /usr/lib/node_modules/** r,
+
+  # Shared libraries
+  /usr/lib/** rm,
+  /usr/lib64/** rm,
+  /lib/** rm,
+  /lib64/** rm,
+
+  # System config (read-only, basic system info)
+  /etc/localtime r,
+  /etc/timezone r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /etc/nsswitch.conf r,
+  /etc/passwd r,    # Needed for username lookup
+  /etc/group r,
+
+  # OpenClaw config directory — full read/write
+  owner @{HOME}/.openclaw/ rw,
+  owner @{HOME}/.openclaw/** rw,
+
+  # Workspace — full read/write for agent operations
+  owner @{HOME}/.openclaw/workspace/ rw,
+  owner @{HOME}/.openclaw/workspace/** mrwkl,
+
+  # LAIA project directory
+  owner @{HOME}/.openclaw/laia/ rw,
+  owner @{HOME}/.openclaw/laia/** mrwkl,
+
+  # Process info for self-monitoring
+  /proc/@{pid}/ r,
+  /proc/@{pid}/** r,
+  /proc/self/ r,
+  /proc/self/** rw,
+  /proc/meminfo r,
+  /proc/cpuinfo r,
+  /sys/fs/cgroup/ r,
+  /sys/fs/cgroup/** r,
+
+  # Network — required for Anthropic API and other external calls
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+
+  # Unix domain sockets (IPC with other local processes)
+  unix (create, listen, accept, connect, send, receive) type=stream,
+
+  # Logging
+  /var/log/openclaw/ rw,
+  /var/log/openclaw/** rw,
+
+  # Capability to signal child processes
+  signal (send) peer=openclaw,
+
+  # -----------------------------------------------------------------------
+  # EXPLICIT DENIALS — protect sensitive data
+  # -----------------------------------------------------------------------
+
+  # Shadow password files
+  deny /etc/shadow r,
+  deny /etc/shadow+ r,
+  deny /etc/gshadow r,
+  deny /etc/sudoers r,
+  deny /etc/sudoers.d/ r,
+
+  # System write protection
+  deny /etc/ w,
+  deny /usr/ w,
+  deny /bin/ w,
+  deny /sbin/ w,
+
+  # Root directory
+  deny /root/ rw,
+  deny /root/** rw,
+
+  # SSH keys — OpenClaw must not be able to read or exfiltrate private keys
+  deny /home/*/.ssh/ r,
+  deny /home/*/.ssh/** r,
+  deny @{HOME}/.ssh/ r,
+  deny @{HOME}/.ssh/** r,
+
+  # GPG keys
+  deny /home/*/.gnupg/ r,
+  deny /home/*/.gnupg/** r,
+  deny @{HOME}/.gnupg/ r,
+  deny @{HOME}/.gnupg/** r,
+
+  # Browser profiles (contain saved passwords, cookies, history)
+  deny @{HOME}/.config/chromium/ r,
+  deny @{HOME}/.config/chromium/** r,
+  deny @{HOME}/.config/google-chrome/ r,
+  deny @{HOME}/.config/google-chrome/** r,
+  deny @{HOME}/.mozilla/ r,
+  deny @{HOME}/.mozilla/** r,
+  deny @{HOME}/.config/BraveSoftware/ r,
+  deny @{HOME}/.config/BraveSoftware/** r,
+
+  # User document directories (privacy protection)
+  deny @{HOME}/Documents/ r,
+  deny @{HOME}/Documents/** r,
+  deny @{HOME}/Desktop/ r,
+  deny @{HOME}/Desktop/** r,
+  deny @{HOME}/Downloads/ r,
+  deny @{HOME}/Downloads/** r,
+  deny @{HOME}/Pictures/ r,
+  deny @{HOME}/Pictures/** r,
+  deny @{HOME}/Videos/ r,
+  deny @{HOME}/Videos/** r,
+
+  # Kernel security interfaces
+  deny /proc/*/mem rw,
+  deny /sys/kernel/security/ rw,
+  deny /sys/kernel/debug/ rw,
+  deny /proc/sysrq-trigger rw,
+  deny /proc/kcore r,
+
+  # Prevent execution from temp dirs (common malware technique)
+  deny /tmp/** x,
+  deny /var/tmp/** x,
+
+  # Block access to other users' data
+  deny /home/*/  r,
+}
